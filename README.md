@@ -125,6 +125,8 @@ Reset WiFi settings and reopen the setup portal.
 
 Planned features include:
 
+- Plane and Sat Track in one Device
+- Offline mode
 - Satellite visual magnitude
 - Additional satellite information
 - Satellite categories
