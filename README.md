@@ -68,7 +68,7 @@ A significant part of this project was written with the help of **CODEX**. The s
 
 ## Installation
 
-### Pla
+### Web Tool
 
 Download the latets Firmware and use an Online tool (esphome for example) for uploading the Firmware 
 to the ESP
