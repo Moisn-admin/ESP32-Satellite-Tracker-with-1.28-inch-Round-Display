@@ -68,13 +68,10 @@ A significant part of this project was written with the help of **CODEX**. The s
 
 ## Installation
 
-### PlatformIO (Recommended)
+### Pla
 
-1. Install PlatformIO IDE or PlatformIO Core.
-2. Open the project folder in VS Code.
-3. Build and upload the firmware to your ESP32-C3 Super Mini.
-4. Connect to the device Wi-Fi setup portal on first boot.
-5. Configure Wi-Fi, location, and display preferences.
+Download the latets Firmware and use an Online tool (esphome for example) for uploading the Firmware 
+to the ESP
 
 ### First Startup
 
