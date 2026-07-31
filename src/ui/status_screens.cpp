@@ -240,3 +240,84 @@ void statusScreenWifiReset() {
   drawTextBlock(config::kColorYellow, config::kTextOnYellow, lines,
                 sizeof(lines) / sizeof(lines[0]));
 }
+void statusScreenOfflinePortal() {
+  const TextLine lines[] = {
+      {
+          "OFFLINE MODE",
+          1.15f,
+          &kPortalGfxTitle
+      },
+      {
+          "Join network:",
+          1.05f,
+          &kPortalGfxBody
+      },
+      {
+          config::kOfflinePortalApName,
+          1.10f,
+          &kPortalGfxEmphasis
+      },
+      {
+          "Open 192.168.4.1",
+          1.0f,
+          &kPortalGfxBody
+      },
+      {
+          "Time syncs automatically",
+          0.92f,
+          &kPortalGfxBody
+      },
+  };
+
+  drawTextBlock(
+      config::kColorYellow,
+      config::kTextOnYellow,
+      lines,
+      sizeof(lines) / sizeof(lines[0]));
+}
+
+void statusScreenOfflineReady(
+    time_t utc_time) {
+  struct tm utc {};
+
+  gmtime_r(
+      &utc_time,
+      &utc);
+
+  char utc_line[32];
+
+  strftime(
+      utc_line,
+      sizeof(utc_line),
+      "%Y-%m-%d %H:%M UTC",
+      &utc);
+
+  const TextLine lines[] = {
+      {
+          "OFFLINE MODE",
+          1.15f,
+          &kPortalGfxTitle
+      },
+      {
+          "Time synchronized",
+          1.05f,
+          &kPortalGfxBody
+      },
+      {
+          utc_line,
+          0.95f,
+          &kPortalGfxBody
+      },
+      {
+          "Using saved TLE",
+          1.0f,
+          &kPortalGfxBody
+      },
+  };
+
+  drawTextBlock(
+      config::kColorYellow,
+      config::kTextOnYellow,
+      lines,
+      sizeof(lines) / sizeof(lines[0]));
+}

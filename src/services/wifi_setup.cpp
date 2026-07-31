@@ -1,5 +1,7 @@
 #include "services/wifi_setup.h"
 
+#include <DNSServer.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 
@@ -80,6 +82,124 @@ void ensureWifiManager();
 void startLanWebPortal();
 void stopLanWebPortal();
 bool wifiLinkUp();
+
+enum class FirstSetupChoice : uint8_t {
+  kNone,
+  kOnline,
+  kOffline,
+};
+
+constexpr char kFirstSetupHtml[] = R"HTML(
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Satellite Radar Setup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background:
+        radial-gradient(circle at top, #14395a 0, #08131f 44%, #03070c 100%);
+      color: #eef7ff;
+    }
+    main {
+      width: min(100%, 520px);
+      padding: 28px 22px;
+      border: 1px solid rgba(126, 211, 255, .25);
+      border-radius: 22px;
+      background: rgba(5, 17, 28, .92);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+    }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: #67d8ff;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(1.8rem, 8vw, 2.5rem);
+      line-height: 1.05;
+    }
+    .intro {
+      margin: 0 0 24px;
+      color: #b7c9d8;
+      line-height: 1.5;
+    }
+    form { margin: 14px 0 0; }
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 15px;
+      padding: 17px 18px;
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .online {
+      color: #03131b;
+      background: linear-gradient(135deg, #61dcff, #74ffa9);
+    }
+    .offline {
+      color: #f3f8fc;
+      background: #23384a;
+      border: 1px solid #42627c;
+    }
+    small {
+      display: block;
+      margin: 8px 3px 0;
+      color: #91a8ba;
+      line-height: 1.4;
+    }
+    .note {
+      margin: 22px 0 0;
+      padding-top: 18px;
+      border-top: 1px solid rgba(255, 255, 255, .1);
+      color: #7f96a8;
+      font-size: .82rem;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Satellite Radar</p>
+    <h1>Startmodus wählen</h1>
+    <p class="intro">
+      Es sind noch keine WLAN-Zugangsdaten gespeichert.
+      Wie möchtest du das Radar starten?
+    </p>
+
+    <form action="/online" method="get">
+      <button class="online" type="submit">ONLINE EINRICHTEN</button>
+      <small>WLAN auswählen, Zugangsdaten speichern und Internetfunktionen nutzen.</small>
+    </form>
+
+    <form action="/offline" method="get">
+      <button class="offline" type="submit">OFFLINE STARTEN</button>
+      <small>Uhrzeit vom Handy übernehmen und vorhandene TLE-Daten verwenden.</small>
+    </form>
+
+    <p class="note">
+      Diese Auswahl erscheint nur, solange noch kein WLAN gespeichert ist.
+    </p>
+  </main>
+</body>
+</html>
+)HTML";
 
 constexpr int kCoordParamLen = 20;
 constexpr char kCoordInputAttrs[] =
@@ -343,6 +463,110 @@ bool connectSavedNetwork(bool show_ui) {
   return tryConnectWithUi(ssid, pass, show_ui);
 }
 
+void sendChoiceAccepted(WebServer& server,
+                        const char* heading,
+                        const char* text) {
+  String page;
+  page.reserve(900);
+  page += F("<!doctype html><html lang='de'><head><meta charset='utf-8'>");
+  page += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+  page += F("<title>Satellite Radar</title><style>");
+  page += F("body{margin:0;min-height:100vh;display:grid;place-items:center;");
+  page += F("padding:24px;background:#07111b;color:#eef7ff;font-family:system-ui,sans-serif}");
+  page += F("main{max-width:460px;padding:28px;border:1px solid #29465d;");
+  page += F("border-radius:20px;background:#0b1d2b;text-align:center}");
+  page += F("h1{margin-top:0}p{color:#b7c9d8;line-height:1.5}</style></head><body><main><h1>");
+  page += heading;
+  page += F("</h1><p>");
+  page += text;
+  page += F("</p></main></body></html>");
+  server.send(200, "text/html; charset=utf-8", page);
+}
+
+FirstSetupChoice waitForFirstSetupChoice() {
+  stopLanWebPortal();
+
+#ifdef WM_MDNS
+  MDNS.end();
+#endif
+
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
+  const IPAddress portal_ip(192, 168, 4, 1);
+  const IPAddress portal_mask(255, 255, 255, 0);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(portal_ip, portal_ip, portal_mask);
+
+  if (!WiFi.softAP(config::kPortalApName)) {
+    Serial.println("First setup chooser: could not start access point");
+    WiFi.mode(WIFI_OFF);
+    return FirstSetupChoice::kOnline;
+  }
+
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+
+  DNSServer dns;
+  WebServer server(80);
+  FirstSetupChoice choice = FirstSetupChoice::kNone;
+
+  server.on("/", HTTP_GET, [&server]() {
+    server.send(200, "text/html; charset=utf-8", kFirstSetupHtml);
+  });
+
+  server.on("/online", HTTP_GET, [&server, &choice]() {
+    choice = FirstSetupChoice::kOnline;
+    sendChoiceAccepted(
+        server,
+        "Online-Einrichtung startet",
+        "Der Einrichtungs-Hotspot wird gleich neu gestartet. "
+        "Verbinde dich bei Bedarf erneut und wähle dein WLAN aus.");
+  });
+
+  server.on("/offline", HTTP_GET, [&server, &choice]() {
+    choice = FirstSetupChoice::kOffline;
+    sendChoiceAccepted(
+        server,
+        "Offline-Modus startet",
+        "Der Offline-Hotspot wird gleich gestartet. "
+        "Verbinde dich damit, damit die Uhrzeit übernommen werden kann.");
+  });
+
+  server.onNotFound([&server]() {
+    server.send(200, "text/html; charset=utf-8", kFirstSetupHtml);
+  });
+
+  dns.start(53, "*", portal_ip);
+  server.begin();
+
+  statusScreenPortal();
+
+  Serial.printf(
+      "First setup chooser: connect to %s and open http://%s\n",
+      config::kPortalApName,
+      portal_ip.toString().c_str());
+
+  while (choice == FirstSetupChoice::kNone) {
+    dns.processNextRequest();
+    server.handleClient();
+    bootButtonPollLongPress();
+    delay(10);
+  }
+
+  delay(350);
+  server.stop();
+  dns.stop();
+
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(150);
+
+  return choice;
+}
+
 bool openConfigPortal() {
   stopLanWebPortal();
   WiFi.disconnect(true);
@@ -391,6 +615,7 @@ bool bootButtonConsumeTap() {
   portEXIT_CRITICAL(&s_boot_mux);
   return tap;
 }
+
 bool bootButtonConsumeInfoToggle() {
   portENTER_CRITICAL(&s_boot_mux);
 
@@ -404,6 +629,7 @@ bool bootButtonConsumeInfoToggle() {
 
   return pending;
 }
+
 void bootButtonPollLongPress() {
   if (wifiBootButtonPressed()) {
     portENTER_CRITICAL(&s_boot_mux);
@@ -469,20 +695,34 @@ bool wifiSetupConnect() {
     delay(100);
   }
 
-  if (force_portal) {
-    Serial.println("Opening WiFi setup portal (after reset)");
+  const bool has_saved_wifi = storedWifiCredentials();
+
+  if (!has_saved_wifi) {
+    Serial.println("No saved WiFi — opening online/offline chooser");
+
+    const FirstSetupChoice choice =
+        waitForFirstSetupChoice();
+
+    if (choice == FirstSetupChoice::kOffline) {
+      Serial.println("First setup choice: offline");
+      return false;
+    }
+
+    Serial.println("First setup choice: online");
+
     if (openConfigPortal() && wifiLinkUp()) {
       WiFi.setAutoReconnect(true);
       Serial.printf("Connected: %s  IP %s\n", WiFi.SSID().c_str(),
                     WiFi.localIP().toString().c_str());
       return true;
     }
+
     Serial.println("WiFi connection failed");
     statusScreenConnectFailed();
     return false;
   }
 
-  Serial.println("Connecting to WiFi (portal opens if needed)...");
+  Serial.println("Connecting to saved WiFi...");
 
   if (wifiLinkUp()) {
     WiFi.setAutoReconnect(true);
@@ -491,18 +731,14 @@ bool wifiSetupConnect() {
     return true;
   }
 
-  if (storedWifiCredentials() && connectSavedNetwork(true)) {
+  if (connectSavedNetwork(true)) {
     WiFi.setAutoReconnect(true);
     Serial.printf("Connected: %s  IP %s\n", WiFi.SSID().c_str(),
                   WiFi.localIP().toString().c_str());
     return true;
   }
 
-  if (storedWifiCredentials()) {
-    Serial.println("Saved WiFi could not connect — opening setup portal");
-  } else {
-    Serial.println("No saved WiFi — opening setup portal");
-  }
+  Serial.println("Saved WiFi could not connect — opening setup portal");
 
   if (openConfigPortal() && wifiLinkUp()) {
     WiFi.setAutoReconnect(true);

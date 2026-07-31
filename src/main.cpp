@@ -4,7 +4,6 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-
 #include "config.h"
 #include "hardware/display.h"
 #include "network/tle_download.h"
@@ -13,6 +12,7 @@
 #include "services/adsb_client.h"
 #include "services/radar_location.h"
 #include "services/time_sync.h"
+#include "services/offline_time_portal.h"
 #include "services/wifi_setup.h"
 #include "storage/filesystem.h"
 #include "ui/radar_display.h"
@@ -23,10 +23,17 @@
 namespace {
 
 bool g_radar_visible = false;
+bool g_offline_mode = false;
+bool g_tracking_ready = false;
 unsigned long g_wifi_down_since = 0;
 unsigned long g_last_reconnect_ms = 0;
 unsigned long g_last_satellite_update_ms = 0;
 
+
+void showRadar() {
+  ui::radarDisplayDraw();
+  g_radar_visible = true;
+}
 
 void showRadarIfConnected() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -34,10 +41,34 @@ void showRadarIfConnected() {
     return;
   }
 
-  ui::radarDisplayDraw();
-  g_radar_visible = true;
+  showRadar();
 }
+bool updateSatellitesAndDraw() {
+  if (!satellite::update()) {
+    Serial.println("Satellite update failed");
+    return false;
+  }
 
+  Serial.printf(
+      "Visible satellites: %d\n",
+      satellite::count());
+
+  satellite::updateAutomaticSelection(millis());
+
+  const Satellite* selected_satellite =
+      satellite::selected();
+
+  if (selected_satellite != nullptr) {
+    Serial.printf(
+        "Selected: %s  Az %.1f  El %.1f\n",
+        selected_satellite->name,
+        selected_satellite->azimuth,
+        selected_satellite->elevation);
+  }
+
+  showRadar();
+  return true;
+}
 void onRangeTap() {
   ui::radar::rangeNext();
 
@@ -48,7 +79,7 @@ void onRangeTap() {
                 range_label,
                 ui::radar::rangeCurrent().outer_km);
 
-  if (g_radar_visible && WiFi.status() == WL_CONNECTED) {
+  if (g_radar_visible) {
     ui::radarDisplayDraw();
   }
 }
@@ -116,37 +147,57 @@ void setup() {
   ui::radar::rangeInit();
   services::adsb::setPollFn(wifiLoop);
 
-  if (wifiSetupConnect()) {
-    showRadarIfConnected();
+  const bool wifi_connected = wifiSetupConnect();
 
-    services::time_sync::begin();
+  if (wifi_connected) {
+    Serial.println("Online mode");
 
- if (satellite::update()) {
-  Serial.printf("Visible satellites: %d\n",
-                satellite::count());
+    if (!services::time_sync::begin()) {
+      Serial.println("Online time synchronization failed");
+      return;
+    }
+  } else {
+    Serial.println("WiFi unavailable — starting offline mode");
 
-  satellite::updateAutomaticSelection(millis());
+    g_offline_mode = true;
 
-  const Satellite* selected_satellite =
-      satellite::selected();
-
-  if (selected_satellite != nullptr) {
-    Serial.printf(
-        "Selected: %s  Az %.1f  El %.1f\n",
-        selected_satellite->name,
-        selected_satellite->azimuth,
-        selected_satellite->elevation);
+    if (!services::offline_time_portal::run()) {
+      Serial.println("Offline time synchronization failed");
+      return;
+    }
   }
-} else {
-  Serial.println("Satellite update failed");
-}
+
+  if (!services::time_sync::ready()) {
+    Serial.println("No valid system time");
+    return;
   }
+
+  g_tracking_ready = true;
+
+  updateSatellitesAndDraw();
 
   Serial.println("Satellite module ready");
 }
-
 void loop() {
   handleBootButton();
+
+  if (!g_tracking_ready) {
+    delay(10);
+    return;
+  }
+
+  // Offline-Betrieb: kein WLAN-Reconnect und kein wifiLoop().
+  if (g_offline_mode) {
+    if (millis() - g_last_satellite_update_ms >= 2000UL) {
+      g_last_satellite_update_ms = millis();
+      updateSatellitesAndDraw();
+    }
+
+    delay(10);
+    return;
+  }
+
+  // Ab hier normaler Online-Betrieb.
   wifiLoop();
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -159,7 +210,8 @@ void loop() {
       g_wifi_down_since = millis();
     }
 
-    const unsigned long down_ms = millis() - g_wifi_down_since;
+    const unsigned long down_ms =
+        millis() - g_wifi_down_since;
 
     if (down_ms >= config::kWifiDownGraceMs &&
         millis() - g_last_reconnect_ms >=
@@ -176,31 +228,11 @@ void loop() {
 
     if (!g_radar_visible) {
       showRadarIfConnected();
-    } else if (millis() - g_last_satellite_update_ms >= 2000UL) {
-  g_last_satellite_update_ms = millis();
-
- if (satellite::update()) {
-  Serial.printf("Visible satellites: %d\n",
-                satellite::count());
-
-  satellite::updateAutomaticSelection(millis());
-
-  const Satellite* selected_satellite =
-      satellite::selected();
-
-  if (selected_satellite != nullptr) {
-    Serial.printf(
-        "Selected: %s  Az %.1f  El %.1f\n",
-        selected_satellite->name,
-        selected_satellite->azimuth,
-        selected_satellite->elevation);
-  }
-
-  ui::radarDisplayDraw();
-} else {
-    Serial.println("Satellite update failed");
-  }
-}
+    } else if (
+        millis() - g_last_satellite_update_ms >= 2000UL) {
+      g_last_satellite_update_ms = millis();
+      updateSatellitesAndDraw();
+    }
   }
 
   delay(10);

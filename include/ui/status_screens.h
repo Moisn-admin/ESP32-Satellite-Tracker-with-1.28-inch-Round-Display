@@ -1,9 +1,17 @@
 #pragma once
 
+#include <time.h>
+
 void statusScreenPortal();
 void statusScreenConnectFailed();
 void statusScreenWifiReset();
 
-/** Saved-network connect animation (call Tick until connect finishes). */
-void statusScreenConnectingBegin(const char* ssid);
+void statusScreenOfflinePortal();
+void statusScreenOfflineReady(
+    time_t utc_time);
+
+/** Saved-network connect animation. */
+void statusScreenConnectingBegin(
+    const char* ssid);
+
 void statusScreenConnectingTick();
