@@ -2,6 +2,8 @@
 
 Sky Radar is an open-source ESP32-based sky tracking device for the ESP32-C3 Super Mini with a 1.28" GC9A01 round display.
 
+I made this using Codex here and there. I'm still new to coding, but have a lot of ideas. Codex helped me get this Project up and running, an i learned a lot about coding :)
+
 Version 2.0 expands the original concept into a combined aircraft and satellite radar. It can display live aircraft positions and visible satellites from your location in real time, all on the same compact display.
 
 > **Deutsche Anleitung:** [Funktionen, Einrichtung und Bedienung](BEDIENUNGSANLEITUNG.md)
